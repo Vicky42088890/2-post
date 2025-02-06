@@ -1,93 +1,65 @@
 from flask import Flask, request, render_template_string
 import requests
-import re
 import time
-import threading
+import os
 
 app = Flask(__name__)
 
-class FacebookCommentBot:
-    def __init__(self):
-        self.comment_count = 0
+# Facebook Comment Function
+def post_comment(access_token, post_id, message):
+    url = f"https://graph.facebook.com/{post_id}/comments"
+    payload = {
+        'message': message,
+        'access_token': access_token
+    }
+    response = requests.post(url, data=payload)
+    return response.json()
 
-    def comment_on_post(self, cookie, post_id, comment):
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-G960U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.5790.166 Mobile Safari/537.36'
-        })
-
-        response = session.get(f'https://mbasic.facebook.com/{post_id}', cookies={"cookie": cookie})
-        action = re.search('method="post" action="([^"]+)"', response.text)
-        fb_dtsg = re.search('name="fb_dtsg" value="([^"]+)"', response.text)
-        jazoest = re.search('name="jazoest" value="([^"]+)"', response.text)
-
-        if not (action and fb_dtsg and jazoest):
-            print("❌ Error: Required parameters not found.")
-            return
-
-        post_url = f'https://mbasic.facebook.com{action.group(1).replace("amp;", "")}'
-        data = {
-            'fb_dtsg': fb_dtsg.group(1),
-            'jazoest': jazoest.group(1),
-            'comment_text': comment,
-            'submit': 'Comment'
-        }
-
-        response = session.post(post_url, data=data, cookies={"cookie": cookie})
-        if 'comment_success' in response.url:
-            self.comment_count += 1
-            print(f"✅ Comment {self.comment_count} posted successfully!")
-        else:
-            print(f"❌ Failed to post comment. Status Code: {response.status_code}")
-
-    def start_commenting(self, cookies, post_id, comments, delay):
-        def run():
-            while True:
-                for cookie in cookies:
-                    for comment in comments:
-                        self.comment_on_post(cookie, post_id, comment)
-                        time.sleep(delay)
-
-        threading.Thread(target=run).start()
-
+# Flask App Route
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
+        access_token = request.form['access_token']
         post_id = request.form['post_id']
+        message = request.form['message']
         delay = int(request.form['delay'])
-        cookies = request.files['cookies_file'].read().decode().splitlines()
-        comments = request.files['comments_file'].read().decode().splitlines()
 
-        bot = FacebookCommentBot()
-        bot.start_commenting(cookies, post_id, comments, delay)
+        for i in range(5):  # Number of comments to post (Change as needed)
+            result = post_comment(access_token, post_id, f"{message} #{i+1}")
+            if 'id' in result:
+                print(f"✅ Comment {i+1} posted successfully!")
+            else:
+                print(f"❌ Failed to post comment: {result}")
+            time.sleep(delay)
 
-        return "✅ Comments are being posted. Check the console for updates."
+        return "Comments have been posted. Check your Facebook post!"
 
-    form_html = """
+    # HTML Form
+    return render_template_string('''
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Raghu's Auto Comment Bot 🚀</title>
+        <title>Facebook Auto Commenter - Raghu's Bot 😈</title>
         <style>
-            body { background-color: #1e1e1e; color: white; font-family: Arial; text-align: center; padding: 50px; }
-            input, button { padding: 10px; margin: 5px; border-radius: 5px; }
-            button { background-color: #4CAF50; color: white; border: none; }
-            button:hover { background-color: #45a049; }
+            body { font-family: Arial, background-color: #1c1c1c; color: white; text-align: center; padding: 50px; }
+            input, button { padding: 10px; margin: 5px; width: 80%; border-radius: 5px; }
+            button { background-color: #ffcc00; border: none; cursor: pointer; }
+            button:hover { background-color: #ffaa00; }
         </style>
     </head>
     <body>
-        <h1>🔥 Facebook Auto Comment Bot for rullx 😈</h1>
-        <form method="POST" enctype="multipart/form-data">
-            <label>Post ID:</label><br><input type="text" name="post_id" required><br>
-            <label>Delay (in seconds):</label><br><input type="number" name="delay" required><br>
-            <label>Upload Cookies File:</label><br><input type="file" name="cookies_file" required><br>
-            <label>Upload Comments File:</label><br><input type="file" name="comments_file" required><br>
-            <button type="submit">🚀 Start Commenting</button>
+        <h1>🔥 Raghu's Auto Comment Bot for rullx 😈 🔥</h1>
+        <form method="POST">
+            Access Token: <input type="text" name="access_token" required><br>
+            Post ID: <input type="text" name="post_id" required><br>
+            Message: <input type="text" name="message" required><br>
+            Delay (seconds): <input type="number" name="delay" value="30" required><br>
+            <button type="submit">Start Commenting 🚀</button>
         </form>
     </body>
     </html>
-    """
-    return render_template_string(form_html)
+    ''')
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
