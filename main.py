@@ -1,9 +1,7 @@
 from flask import Flask, request, render_template_string
 import requests
-import re
 import time
 import threading
-import os
 
 app = Flask(__name__)
 
@@ -11,109 +9,72 @@ class FacebookCommenter:
     def __init__(self):
         self.comment_count = 0
 
-    def comment_on_post(self, cookies, post_id, comment):
-        with requests.Session() as r:
-            r.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-G960U)',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Connection': 'keep-alive'
-            })
+    def comment_on_post(self, cookie, post_id, comment):
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.5790.166 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+        }
+        session = requests.Session()
+        session.headers.update(headers)
+        session.cookies.set('cookie', cookie)
 
-            try:
-                response = r.get(f'https://mbasic.facebook.com/{post_id}', cookies={"cookie": cookies})
-                if response.status_code != 200:
-                    print(f"❌ पेज लोड नहीं हुआ, स्टेटस कोड: {response.status_code}")
-                    return
+        post_url = f'https://mbasic.facebook.com/{post_id}'
+        response = session.get(post_url)
 
-                next_action = re.search('method="post" action="([^"]+)"', response.text)
-                fb_dtsg = re.search('name="fb_dtsg" value="([^"]+)"', response.text)
-                jazoest = re.search('name="jazoest" value="([^"]+)"', response.text)
+        if 'name="fb_dtsg"' not in response.text:
+            print("Login failed or invalid cookie.")
+            return
 
-                if not (next_action and fb_dtsg and jazoest):
-                    print("⚠️ टोकन नहीं मिले, HTML कोड चेक करें।")
-                    return
+        fb_dtsg = response.text.split('name="fb_dtsg" value="')[1].split('"')[0]
+        jazoest = response.text.split('name="jazoest" value="')[1].split('"')[0]
 
-                data = {
-                    'fb_dtsg': fb_dtsg.group(1),
-                    'jazoest': jazoest.group(1),
-                    'comment_text': comment,
-                    'comment': 'Submit'
-                }
+        action_url = response.text.split('method="post" action="')[1].split('"')[0].replace('amp;', '')
 
-                response2 = r.post(f'https://mbasic.facebook.com{next_action.group(1)}', data=data, cookies={"cookie": cookies})
-                
-                if 'comment_success' in response2.url:
-                    self.comment_count += 1
-                    print(f"✅ कमेंट {self.comment_count} सफलतापूर्वक पोस्ट हुआ!")
-                else:
-                    print(f"❌ कमेंट फेल हुआ। Status Code: {response2.status_code}")
+        payload = {
+            'fb_dtsg': fb_dtsg,
+            'jazoest': jazoest,
+            'comment_text': comment,
+            'submit': 'Comment'
+        }
 
-            except Exception as e:
-                print(f"⚠️ एरर: {e}")
+        comment_response = session.post(f'https://mbasic.facebook.com{action_url}', data=payload)
 
-    def process_inputs(self, cookies, post_id, comments, delay):
-        threading.Thread(target=self._process, args=(cookies, post_id, comments, delay)).start()
+        if comment_response.status_code == 200:
+            self.comment_count += 1
+            print(f"✅ Comment {self.comment_count} posted successfully.")
+        else:
+            print("❌ Failed to post comment.")
 
-    def _process(self, cookies, post_id, comments, delay):
-        cookie_index = 0
+    def start_commenting(self, cookies, post_id, comments, delay):
         while True:
-            for comment in comments:
-                comment = comment.strip()
-                if comment:
+            for cookie in cookies:
+                for comment in comments:
+                    self.comment_on_post(cookie, post_id, comment)
                     time.sleep(delay)
-                    self.comment_on_post(cookies[cookie_index], post_id, comment)
-                    cookie_index = (cookie_index + 1) % len(cookies)
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
         post_id = request.form['post_id']
         delay = int(request.form['delay'])
-        cookies_file = request.files['cookies_file']
-        comments_file = request.files['comments_file']
-
-        cookies = cookies_file.read().decode('utf-8').splitlines()
-        comments = comments_file.read().decode('utf-8').splitlines()
-
-        if len(cookies) == 0 or len(comments) == 0:
-            return "Cookies या comments file खाली है।"
+        cookies = request.form['cookies'].splitlines()
+        comments = request.form['comments'].splitlines()
 
         commenter = FacebookCommenter()
-        commenter.process_inputs(cookies, post_id, comments, delay)
+        threading.Thread(target=commenter.start_commenting, args=(cookies, post_id, comments, delay)).start()
 
-        return "✅ कमेंट्स भेजे जा रहे हैं। अपडेट्स के लिए कंसोल चेक करें।"
+        return "✅ Comments are being posted. Check logs for updates."
 
-    form_html = '''
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Facebook Auto Commenter</title>
-        <style>
-            body { background-color: #222; color: white; text-align: center; font-family: Arial; }
-            .container { background: #333; padding: 20px; margin: 50px auto; border-radius: 10px; width: 300px; }
-            input, button { padding: 10px; margin: 10px; width: 90%; }
-            button { background-color: limegreen; color: white; border: none; cursor: pointer; }
-            button:hover { background-color: darkgreen; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>FB Auto Commenter</h1>
-            <form method="POST" enctype="multipart/form-data">
-                Post ID: <input type="text" name="post_id" required><br>
-                Delay (seconds): <input type="number" name="delay" required><br>
-                Cookies File: <input type="file" name="cookies_file" required><br>
-                Comments File: <input type="file" name="comments_file" required><br>
-                <button type="submit">Start Commenting</button>
-            </form>
-        </div>
-    </body>
-    </html>
-    '''
-    return render_template_string(form_html)
+    return render_template_string('''
+        <h1>Facebook Auto Comment Bot</h1>
+        <form method="POST">
+            Post ID: <input type="text" name="post_id" required><br><br>
+            Delay (in seconds): <input type="number" name="delay" required><br><br>
+            Cookies (one per line): <textarea name="cookies" rows="5" required></textarea><br><br>
+            Comments (one per line): <textarea name="comments" rows="5" required></textarea><br><br>
+            <button type="submit">Start Commenting</button>
+        </form>
+    ''')
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 4000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
